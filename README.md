@@ -1,4 +1,4 @@
-# Cloud Cost Watchdog
+# BurnWatch
 
 A hackathon MVP that catches cloud/AI spend spikes before they burn a startup's runway, explains them in plain English, and lets you stop them with one click.
 

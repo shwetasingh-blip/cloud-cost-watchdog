@@ -12,9 +12,22 @@ import {
   stepToward,
 } from "@/lib/mockData";
 import { analyzeSpend, estimateRunwayDaysLost } from "@/lib/anomalyDetection";
+import { formatCurrency, formatPercent } from "@/lib/format";
+import { type LogEvent, type EventType, makeEvent, EVENTS_KEY, MAX_EVENTS } from "@/lib/eventLog";
 
 const CONNECTED_KEY = "ccw_connected";
-const TICK_MS = 2500;
+export const TICK_MS = 2500;
+const HEARTBEAT_EVERY_N_TICKS = 12; // ~30s at TICK_MS=2500
+
+function loadPersistedEvents(): LogEvent[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(EVENTS_KEY);
+    return raw ? (JSON.parse(raw) as LogEvent[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 function buildInitialResources(): ResourceResult[] {
   return SERVICE_CATALOG.map((service) => {
@@ -39,8 +52,9 @@ interface ResourcesContextValue {
   error: string | null;
   pausingId: string | null;
   lastUpdated: number | null;
+  checksRun: number;
+  events: LogEvent[];
   flagged: ResourceResult[];
-  resolved: ResourceResult[];
   totalSpendToday: number;
   baselineTotalToday: number;
   spendDeltaPct: number;
@@ -64,17 +78,35 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [pausingId, setPausingId] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [checksRun, setChecksRun] = useState(0);
+  // A lazy initializer runs synchronously on the very first render, before
+  // any effect (including the write-effect below that persists this same
+  // state back to storage). Reading it in a useEffect instead created a
+  // real race: on a full reload, React's dev-mode double-mount let the
+  // write-effect fire once with the still-default empty array before the
+  // read-effect's result ever landed, permanently clobbering saved history
+  // with "[]". A pure lazy initializer has no such window.
+  const [events, setEvents] = useState<LogEvent[]>(loadPersistedEvents);
   const rampTargets = useRef<Record<string, number>>({});
+  const ticksRef = useRef(0);
 
-  // Every change — ticks, explain responses, pauses — routes through this
-  // ref-backed helper so each state transition applies exactly once, even
+  // Every change — ticks, explain responses, pauses — routes through these
+  // ref-backed helpers so each state transition applies exactly once, even
   // though React's dev mode may invoke an updater function more than once
-  // to catch impure ones (which would otherwise double-fire the AI call).
+  // to catch impure ones (which would otherwise double-fire the AI call or
+  // double-log an event).
   const resourcesRef = useRef<ResourceResult[]>([]);
   const applyResources = useCallback((updater: (prev: ResourceResult[]) => ResourceResult[]) => {
     const next = updater(resourcesRef.current);
     resourcesRef.current = next;
     setResources(next);
+  }, []);
+
+  const eventsRef = useRef<LogEvent[]>(events);
+  const logEvent = useCallback((type: EventType, message: string) => {
+    const next = [makeEvent(type, message), ...eventsRef.current].slice(0, MAX_EVENTS);
+    eventsRef.current = next;
+    setEvents(next);
   }, []);
 
   useEffect(() => {
@@ -88,6 +120,14 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
+    } catch {
+      // ignore storage failures, the log still works for this session
+    }
+  }, [events]);
+
   const handleConnectDone = useCallback(() => {
     try {
       window.localStorage.setItem(CONNECTED_KEY, "true");
@@ -99,7 +139,8 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     setResources(initial);
     setLastUpdated(Date.now());
     setConnected(true);
-  }, []);
+    logEvent("connect", "Connected AWS, OpenAI, Anthropic, Vercel — monitoring started");
+  }, [logEvent]);
 
   const handleDisconnect = useCallback(() => {
     try {
@@ -112,10 +153,12 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     setResources([]);
     setLastUpdated(null);
     setConnected(false);
-  }, []);
+    logEvent("disconnect", "Disconnected all accounts");
+  }, [logEvent]);
 
   const requestExplanation = useCallback(
     async (id: string, dailySpend: number[]) => {
+      const name = resourcesRef.current.find((r) => r.id === id)?.name ?? id;
       try {
         const res = await fetch("/api/explain", {
           method: "POST",
@@ -131,6 +174,7 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
               : r
           )
         );
+        logEvent("explained", data.aiError ? `AI explanation unavailable for ${name}` : `AI explanation ready for ${name}`);
       } catch {
         applyResources((prev) =>
           prev.map((r) =>
@@ -145,9 +189,10 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
               : r
           )
         );
+        logEvent("explained", `AI explanation unavailable for ${name}`);
       }
     },
-    [applyResources]
+    [applyResources, logEvent]
   );
 
   const tick = useCallback(() => {
@@ -180,7 +225,11 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
         const eligibleForExplain = isRamping ? justArrived : true;
         const newlyFlagged = eligibleForExplain && stats.flagged && !r.explanation;
 
-        if (newlyFlagged) toExplain.push({ id: r.id, dailySpend: newDailySpend });
+        if (newlyFlagged) {
+          toExplain.push({ id: r.id, dailySpend: newDailySpend });
+          const pct = stats.mean > 0 ? ((stats.latest - stats.mean) / stats.mean) * 100 : 0;
+          logEvent("anomaly", `${r.name} spend spiked to ${formatCurrency(stats.latest)} (${formatPercent(pct)})`);
+        }
 
         return {
           ...r,
@@ -192,9 +241,16 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
       })
     );
 
+    ticksRef.current += 1;
+    setChecksRun(ticksRef.current);
     setLastUpdated(Date.now());
+
+    if (toExplain.length === 0 && ticksRef.current % HEARTBEAT_EVERY_N_TICKS === 0) {
+      logEvent("heartbeat", `Routine check complete — ${resourcesRef.current.length} services normal`);
+    }
+
     toExplain.forEach(({ id, dailySpend }) => requestExplanation(id, dailySpend));
-  }, [applyResources, requestExplanation]);
+  }, [applyResources, requestExplanation, logEvent]);
 
   useEffect(() => {
     if (!connected) return;
@@ -206,6 +262,7 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     async (id: string) => {
       setPausingId(id);
       delete rampTargets.current[id];
+      const name = resourcesRef.current.find((r) => r.id === id)?.name ?? id;
       try {
         const res = await fetch("/api/pause", {
           method: "POST",
@@ -221,13 +278,14 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
             return { ...r, paused: true, dailySpend: [...r.dailySpend.slice(1), flat, flat, flat] };
           })
         );
+        logEvent("pause", `Paused ${name} — spend flattened to ${formatCurrency(resourcesRef.current.find((r) => r.id === id)?.stats.mean ?? 0)}/day`);
       } catch {
         setError("Could not pause that resource — try again.");
       } finally {
         setPausingId(null);
       }
     },
-    [applyResources]
+    [applyResources, logEvent]
   );
 
   const handleSimulateSpike = useCallback(() => {
@@ -239,7 +297,6 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
   }, [tick]);
 
   const flagged = useMemo(() => resources.filter((r) => r.stats.flagged && !r.paused), [resources]);
-  const resolved = useMemo(() => resources.filter((r) => r.paused), [resources]);
 
   const totalSpendToday = useMemo(
     () => resources.reduce((sum, r) => sum + r.dailySpend[r.dailySpend.length - 1], 0),
@@ -274,8 +331,9 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     error,
     pausingId,
     lastUpdated,
+    checksRun,
+    events,
     flagged,
-    resolved,
     totalSpendToday,
     baselineTotalToday,
     spendDeltaPct,

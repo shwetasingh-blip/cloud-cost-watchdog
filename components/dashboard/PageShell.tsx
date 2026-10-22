@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
+import TabStatus from "./TabStatus";
 import ConnectAccounts from "@/components/ConnectAccounts";
 import { useResources } from "@/contexts/ResourcesContext";
 
@@ -24,6 +25,7 @@ export default function PageShell({ title, subtitle, children }: PageShellProps)
 
   return (
     <div className="shell">
+      <TabStatus />
       <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
       <div className="shell__main">
         <Header title={title} subtitle={subtitle} onMenuClick={() => setNavOpen(true)} />

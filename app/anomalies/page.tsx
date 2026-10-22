@@ -1,13 +1,15 @@
 "use client";
 
+import { useMemo } from "react";
 import PageShell from "@/components/dashboard/PageShell";
 import AnomalyPanel from "@/components/dashboard/AnomalyPanel";
+import ActivityLog from "@/components/dashboard/ActivityLog";
 import { useResources } from "@/contexts/ResourcesContext";
-import { formatCurrency } from "@/lib/format";
 import { CheckIcon } from "@/components/icons";
 
 export default function AnomaliesPage() {
-  const { flagged, resolved } = useResources();
+  const { flagged, events } = useResources();
+  const resolvedEvents = useMemo(() => events.filter((e) => e.type === "pause"), [events]);
 
   return (
     <PageShell title="Anomalies" subtitle="Spend outside each service's own normal range">
@@ -34,26 +36,16 @@ export default function AnomaliesPage() {
 
       <section className="panel">
         <div className="panel__head">
-          <h2 className="panel__title">Resolved this session</h2>
-          <span className="panel__meta">{resolved.length}</span>
+          <h2 className="panel__title">Recently resolved</h2>
+          <span className="panel__meta">{resolvedEvents.length} · persists across reloads</span>
         </div>
 
-        {resolved.length === 0 ? (
+        {resolvedEvents.length === 0 ? (
           <div className="empty-state">
-            <p className="empty-state__body">Nothing paused yet this session.</p>
+            <p className="empty-state__body">Nothing paused yet.</p>
           </div>
         ) : (
-          <div className="resolved-list">
-            {resolved.map((r) => (
-              <div className="resolved-row" key={r.id}>
-                <span className="status-badge status-badge--good">Paused</span>
-                <span className="resolved-row__name">{r.name}</span>
-                <span className="resolved-row__detail">
-                  Flattened to {formatCurrency(r.stats.mean)} / day
-                </span>
-              </div>
-            ))}
-          </div>
+          <ActivityLog events={resolvedEvents} limit={10} />
         )}
       </section>
     </PageShell>

@@ -6,10 +6,11 @@ import TrendChart from "@/components/dashboard/TrendChart";
 import SpendBreakdown from "@/components/dashboard/SpendBreakdown";
 import ServiceTable from "@/components/dashboard/ServiceTable";
 import AnomalyPanel from "@/components/dashboard/AnomalyPanel";
+import ActivityLog from "@/components/dashboard/ActivityLog";
 import { useResources } from "@/contexts/ResourcesContext";
 
 export default function OverviewPage() {
-  const { resources, flagged, totalSpendToday, spendDeltaPct, aiSpendToday, error } = useResources();
+  const { resources, flagged, totalSpendToday, spendDeltaPct, aiSpendToday, error, events } = useResources();
 
   return (
     <PageShell title="Overview" subtitle="Everything you're spending, in one place">
@@ -59,6 +60,14 @@ export default function OverviewPage() {
           <span className="panel__meta">{resources.length} connected</span>
         </div>
         <ServiceTable resources={resources} />
+      </section>
+
+      <section className="panel">
+        <div className="panel__head">
+          <h2 className="panel__title">Activity</h2>
+          <span className="panel__meta">Most recent</span>
+        </div>
+        <ActivityLog events={events} limit={8} />
       </section>
     </PageShell>
   );

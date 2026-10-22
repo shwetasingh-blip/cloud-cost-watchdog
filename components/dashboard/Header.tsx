@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MenuIcon, RefreshIcon, ZapIcon } from "@/components/icons";
-import { useResources } from "@/contexts/ResourcesContext";
+import { useResources, TICK_MS } from "@/contexts/ResourcesContext";
 import { formatRelativeTime } from "@/lib/format";
 
 interface HeaderProps {
@@ -19,6 +19,8 @@ export default function Header({ title, subtitle, onMenuClick }: HeaderProps) {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  const nextCheckInSec = lastUpdated ? Math.max(0, Math.ceil((lastUpdated + TICK_MS - now) / 1000)) : null;
 
   return (
     <header className="dash-header">
@@ -39,7 +41,10 @@ export default function Header({ title, subtitle, onMenuClick }: HeaderProps) {
         </div>
 
         {connected && lastUpdated && (
-          <span className="dash-header__updated">Updated {formatRelativeTime(lastUpdated, now)}</span>
+          <span className="dash-header__updated">
+            Updated {formatRelativeTime(lastUpdated, now)}
+            {nextCheckInSec !== null && ` · next in ${nextCheckInSec}s`}
+          </span>
         )}
 
         <button className="icon-btn" onClick={refreshNow} aria-label="Refresh now" title="Refresh now">

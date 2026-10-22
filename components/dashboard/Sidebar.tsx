@@ -20,7 +20,7 @@ interface SidebarProps {
 
 export default function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
-  const { flagged } = useResources();
+  const { flagged, resources, checksRun } = useResources();
 
   return (
     <>
@@ -29,9 +29,9 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         <div className="sidebar__top">
           <div className="sidebar__brand">
             <span className="sidebar__mark" aria-hidden="true">
-              CW
+              BW
             </span>
-            <span className="sidebar__name">Cloud Cost Watchdog</span>
+            <span className="sidebar__name">BurnWatch</span>
           </div>
           <button className="sidebar__close" onClick={onClose} aria-label="Close navigation">
             <XIcon size={18} />
@@ -61,7 +61,9 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
         <div className="sidebar__foot">
           <span className="sidebar__foot-dot" aria-hidden="true" />
-          <span>5 services monitored</span>
+          <span>
+            {resources.length} services · {checksRun} check{checksRun === 1 ? "" : "s"} run
+          </span>
         </div>
       </aside>
     </>
