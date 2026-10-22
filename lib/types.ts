@@ -21,4 +21,9 @@ export interface ResourceResult {
   paused: boolean;
   flaggedAt?: number; // epoch ms, set the moment a resource is first flagged
   isCustom?: boolean; // user-added platform, not one of the 5 built-ins
+  // True once an explanation has been requested specifically because this
+  // resource was statistically anomalous (not just over a manual limit).
+  // Lets a later, bigger statistical spike override a stale guardrail-only
+  // explanation instead of being permanently blocked by "already explained."
+  explainedForStats?: boolean;
 }

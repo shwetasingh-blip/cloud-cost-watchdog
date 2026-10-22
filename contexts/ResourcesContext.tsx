@@ -107,11 +107,13 @@ interface ResourcesContextValue {
   handleConnectDone: () => void;
   handleDisconnect: () => void;
   refreshNow: () => void;
-  handleAddService: (input: CustomServiceInput) => void;
+  handleAddService: (input: CustomServiceInput) => string;
   handleRemoveService: (id: string) => void;
   guardrails: Record<string, Guardrail>;
   handleSetGuardrail: (guardrail: Guardrail) => void;
   handleClearGuardrail: (resourceId: string) => void;
+  demoSignal: number;
+  handleLoadDemo: () => void;
 }
 
 const ResourcesContext = createContext<ResourcesContextValue | null>(null);
@@ -133,6 +135,10 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
   const [events, setEvents] = useState<LogEvent[]>(loadPersistedEvents);
   const [customCatalog, setCustomCatalog] = useState<ServiceDef[]>(loadCustomCatalog);
   const [guardrails, setGuardrails] = useState<Record<string, Guardrail>>(loadGuardrails);
+  // Bumped each time the presenter loads the demo scenario; ChatBox
+  // watches this to fire its own canned question, since chat history
+  // lives in that component, not here.
+  const [demoSignal, setDemoSignal] = useState(0);
   const rampTargets = useRef<Record<string, number>>({});
   const ticksRef = useRef(0);
   const customCatalogRef = useRef<ServiceDef[]>(customCatalog);
@@ -338,7 +344,14 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
           };
         }
 
-        const newlyFlaggedByStats = eligibleForExplain && stats.flagged && !r.explanation;
+        // A resource can already have a guardrail-only explanation from
+        // an earlier, smaller breach. If it now ALSO crosses into a real
+        // statistical anomaly for the first time, that's a materially
+        // bigger story than "over budget" and deserves a fresh
+        // explanation — not the stale small-breach text sitting there.
+        // Gated on explainedForStats (not raw stats.flagged, which updates
+        // every tick regardless of eligibility) so it fires exactly once.
+        const newlyFlaggedByStats = eligibleForExplain && stats.flagged && (!r.explanation || !r.explainedForStats);
         const newlyFlaggedByGuardrail = guardrailBreached && !stats.flagged && !r.explanation;
         const newlyFlagged = newlyFlaggedByStats || newlyFlaggedByGuardrail;
 
@@ -366,6 +379,13 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
           stats,
           explaining: newlyFlagged,
           flaggedAt: newlyFlagged ? Date.now() : r.flaggedAt,
+          explainedForStats: newlyFlaggedByStats ? true : r.explainedForStats,
+          // Upgrading past a stale guardrail-only explanation: clear it so
+          // the panel shows "reading the numbers" instead of the old,
+          // now-misleading text while the fresh explanation is in flight.
+          ...(newlyFlaggedByStats
+            ? { explanation: undefined, explanationSource: undefined, verdict: undefined, aiError: undefined }
+            : {}),
         };
       })
     );
@@ -496,9 +516,68 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
       const resource = toResourceResult(def, true);
       applyResources((prev) => [...prev, resource]);
       logEvent("service", `Added ${def.name} as a new connected service`);
+      return def.id;
     },
     [applyResources, logEvent, persistCustomCatalog]
   );
+
+  // One-click, fully repeatable demo scenario for a live walkthrough:
+  // resets every resource to a clean baseline, drops in a custom
+  // platform that's already over its limit and auto-stopped (so there's
+  // no waiting to show that story), then kicks off the same real OpenAI
+  // ramp as "Simulate spike" so the anomaly + AI explanation flow plays
+  // out live. Safe to click again mid-demo — it always starts clean.
+  const handleLoadDemo = useCallback(() => {
+    rampTargets.current = {};
+
+    const demoDef = createCustomServiceDef({
+      name: "Datadog",
+      provider: "Datadog",
+      category: "other",
+      estimatedDailySpend: 60,
+      billedInTokens: false,
+    });
+    const nextCatalog = [...customCatalogRef.current.filter((d) => d.name !== "Datadog"), demoDef];
+    persistCustomCatalog(nextCatalog);
+
+    const fresh = buildInitialResources(nextCatalog);
+    const next = fresh.map((r) => {
+      if (r.id !== demoDef.id) return r;
+      const overLimitSpend = [...r.dailySpend.slice(0, -1), 90];
+      const overLimitStats = analyzeSpend(overLimitSpend);
+      const flat = overLimitStats.mean;
+      const flatSpend = [...overLimitSpend.slice(1), flat, flat, flat];
+      return { ...r, dailySpend: flatSpend, stats: analyzeSpend(flatSpend), paused: true };
+    });
+
+    resourcesRef.current = next;
+    setResources(next);
+    setLastUpdated(Date.now());
+
+    const nextGuardrails = {
+      ...guardrailsRef.current,
+      [demoDef.id]: { resourceId: demoDef.id, thresholdDollars: 40, enabled: true, hardStopEnabled: true },
+    };
+    guardrailsRef.current = nextGuardrails;
+    setGuardrails(nextGuardrails);
+    try {
+      window.localStorage.setItem(GUARDRAILS_KEY, JSON.stringify(nextGuardrails));
+    } catch {
+      // ignore storage failures, demo still works for this session
+    }
+
+    logEvent("service", `Added ${demoDef.name} as a new connected service`);
+    logEvent("guardrail", `${demoDef.name} breached its $40/day limit — spend at $90/day`);
+    logEvent(
+      "autostop",
+      `Auto-paused ${demoDef.name} — guardrail hard-stop triggered at $90/day (limit was $40/day)`
+    );
+
+    rampTargets.current[SPIKE_TARGET_ID] = SPIKE_TARGET_VALUE;
+    logEvent("heartbeat", "Demo scenario loaded — watch OpenAI over the next few checks");
+
+    setDemoSignal((n) => n + 1);
+  }, [logEvent, persistCustomCatalog]);
 
   const handleRemoveService = useCallback(
     (id: string) => {
@@ -581,6 +660,8 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     guardrails,
     handleSetGuardrail,
     handleClearGuardrail,
+    demoSignal,
+    handleLoadDemo,
   };
 
   return <ResourcesContext.Provider value={value}>{children}</ResourcesContext.Provider>;

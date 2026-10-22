@@ -1,11 +1,13 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useResources } from "@/contexts/ResourcesContext";
 import { COMPANY_MONTHLY_BURN } from "@/lib/mockData";
 import { generateQuickAnswer, type ChatReply } from "@/lib/chat";
 
 const QUICK_TIMEOUT_MS = 4500;
+const MAX_TURNS = 12;
+const DEMO_QUESTION = "Why did my bill go up today?";
 
 interface Turn {
   id: string;
@@ -16,17 +18,17 @@ interface Turn {
 }
 
 export default function ChatBox() {
-  const { resources, guardrails, totalSpendToday, baselineTotalToday, spendDeltaPct } = useResources();
+  const { resources, guardrails, totalSpendToday, baselineTotalToday, spendDeltaPct, demoSignal } = useResources();
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [pending, setPending] = useState(false);
   const turnCounter = useRef(0);
 
-  const ask = async () => {
-    const q = question.trim();
+  const ask = async (overrideQuestion?: string) => {
+    const q = (overrideQuestion ?? question).trim();
     if (!q || pending) return;
 
-    setQuestion("");
+    if (!overrideQuestion) setQuestion("");
     setPending(true);
     const turnId = `t${++turnCounter.current}`;
 
@@ -43,7 +45,12 @@ export default function ChatBox() {
     const quickTimer = setTimeout(() => {
       if (settled) return;
       const quickText = generateQuickAnswer(snapshot);
-      setTurns((prev) => [{ id: turnId, question: q, text: quickText, label: "Quick read — confirming with AI…", source: "quick" }, ...prev]);
+      setTurns((prev) =>
+        [{ id: turnId, question: q, text: quickText, label: "Quick read — confirming with AI…", source: "quick" as const }, ...prev].slice(
+          0,
+          MAX_TURNS
+        )
+      );
     }, QUICK_TIMEOUT_MS);
 
     try {
@@ -68,7 +75,7 @@ export default function ChatBox() {
 
       setTurns((prev) => {
         const withoutQuick = prev.filter((t) => t.id !== turnId);
-        return [{ id: turnId, question: q, text: data.text, label, source }, ...withoutQuick];
+        return [{ id: turnId, question: q, text: data.text, label, source }, ...withoutQuick].slice(0, MAX_TURNS);
       });
     } catch {
       settled = true;
@@ -81,15 +88,29 @@ export default function ChatBox() {
             question: q,
             text: generateQuickAnswer(snapshot) + " (Couldn't reach the AI — this is the data-only read.)",
             label: "AI unavailable — showing what's known",
-            source: "error",
+            source: "error" as const,
           },
           ...withoutQuick,
-        ];
+        ].slice(0, MAX_TURNS);
       });
     } finally {
       setPending(false);
     }
   };
+
+  // Chat history lives only in this component, so the demo flow (fired
+  // from the shared context) is surfaced here as a signal to ask once on
+  // its own, the same way a presenter typing the question would. Delayed
+  // so the OpenAI spike the demo also kicks off has time to actually show
+  // up in the numbers first — asking instantly would land before the ramp
+  // moves and answer "nothing's unusual," which reads as broken, not just
+  // honestly time-stamped.
+  useEffect(() => {
+    if (demoSignal === 0) return;
+    const id = setTimeout(() => ask(DEMO_QUESTION), 19000);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoSignal]);
 
   return (
     <section className="panel chatbox">

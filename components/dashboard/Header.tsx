@@ -12,7 +12,7 @@ interface HeaderProps {
 }
 
 export default function Header({ title, subtitle, onMenuClick }: HeaderProps) {
-  const { connected, lastUpdated, showSimulateButton, handleSimulateSpike, refreshNow, flagged } = useResources();
+  const { connected, lastUpdated, handleLoadDemo, refreshNow, flagged } = useResources();
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -51,13 +51,11 @@ export default function Header({ title, subtitle, onMenuClick }: HeaderProps) {
           <RefreshIcon size={15} />
         </button>
 
-        {showSimulateButton && (
-          <button className="btn-simulate" onClick={handleSimulateSpike}>
-            <ZapIcon size={13} />
-            Simulate spike
-            <span className="btn-simulate__tag">Demo</span>
-          </button>
-        )}
+        <button className="btn-simulate" onClick={handleLoadDemo}>
+          <ZapIcon size={13} />
+          Load demo
+          <span className="btn-simulate__tag">Demo</span>
+        </button>
       </div>
     </header>
   );
