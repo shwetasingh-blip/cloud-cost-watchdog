@@ -16,12 +16,19 @@ import {
 } from "@/lib/mockData";
 import { analyzeSpend, estimateRunwayDaysLost } from "@/lib/anomalyDetection";
 import { formatCurrency, formatPercent } from "@/lib/format";
+import { generateQuickRead } from "@/lib/quickRead";
 import { type LogEvent, type EventType, makeEvent, EVENTS_KEY, MAX_EVENTS } from "@/lib/eventLog";
 
 const CONNECTED_KEY = "ccw_connected";
 const CUSTOM_CATALOG_KEY = "bw_custom_services";
 export const TICK_MS = 2500;
 const HEARTBEAT_EVERY_N_TICKS = 12; // ~30s at TICK_MS=2500
+// Gemini's free tier can take 60s+ to respond. A founder deciding whether
+// to pause something shouldn't wait that long to see ANY read on it — so
+// a deterministic "quick read" fills in at this mark if the real call
+// hasn't landed yet, and the real explanation silently replaces it the
+// moment it does.
+const QUICK_READ_TIMEOUT_MS = 4500;
 
 function loadPersistedEvents(): LogEvent[] {
   if (typeof window === "undefined") return [];
@@ -185,6 +192,27 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     async (id: string, dailySpend: number[]) => {
       const resource = resourcesRef.current.find((r) => r.id === id);
       const name = resource?.name ?? id;
+
+      // If the real AI call hasn't answered by this mark, show an honest,
+      // deterministic reading computed from data we already have — never
+      // fabricated, clearly labeled as a placeholder (see AnomalyPanel) —
+      // so there's always something readable within a few seconds.
+      const quickReadTimer = setTimeout(() => {
+        const current = resourcesRef.current.find((r) => r.id === id);
+        if (!current || current.explanation) return; // real answer already landed
+        const extraSpend = Math.max(0, current.stats.latest - current.stats.mean);
+        const runwayDaysLost = estimateRunwayDaysLost(extraSpend, COMPANY_MONTHLY_BURN);
+        const quickText = generateQuickRead({
+          resourceName: current.name,
+          stats: current.stats,
+          contextNote: current.contextNote,
+          runwayDaysLost,
+        });
+        applyResources((prev) =>
+          prev.map((r) => (r.id === id && !r.explanation ? { ...r, explanation: quickText, verdict: "unclear", explanationSource: "quick" } : r))
+        );
+      }, QUICK_READ_TIMEOUT_MS);
+
       try {
         const res = await fetch("/api/explain", {
           method: "POST",
@@ -197,16 +225,26 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
           }),
         });
         const data = await res.json();
+        clearTimeout(quickReadTimer);
         if (!res.ok || data.error) throw new Error(data.error || "Explain failed");
         applyResources((prev) =>
           prev.map((r) =>
             r.id === id
-              ? { ...r, stats: data.stats, explanation: data.explanation, verdict: data.verdict, aiError: data.aiError, explaining: false }
+              ? {
+                  ...r,
+                  stats: data.stats,
+                  explanation: data.explanation,
+                  explanationSource: "ai",
+                  verdict: data.verdict,
+                  aiError: data.aiError,
+                  explaining: false,
+                }
               : r
           )
         );
         logEvent("explained", data.aiError ? `AI explanation unavailable for ${name}` : `AI explanation ready for ${name}`);
       } catch {
+        clearTimeout(quickReadTimer);
         applyResources((prev) =>
           prev.map((r) =>
             r.id === id
@@ -214,8 +252,9 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
                   ...r,
                   explaining: false,
                   aiError: true,
-                  explanation: "AI explanation unavailable — showing raw signal only.",
-                  verdict: "unclear",
+                  explanation: r.explanation ?? "AI explanation unavailable — showing raw signal only.",
+                  explanationSource: r.explanationSource ?? "quick",
+                  verdict: r.verdict ?? "unclear",
                 }
               : r
           )

@@ -14,6 +14,7 @@ export interface ResourceResult {
   dailySpend: number[];
   stats: AnomalyStats;
   explanation?: string;
+  explanationSource?: "quick" | "ai"; // "quick" = deterministic bridge text while the real AI call is still in flight
   verdict?: Verdict;
   aiError?: boolean;
   explaining?: boolean;
