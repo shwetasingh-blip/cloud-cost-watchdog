@@ -3,6 +3,7 @@ export type Category = "ai" | "cloud" | "other";
 export interface ServiceDef {
   id: string;
   name: string;
+  provider: string;
   category: Category;
   unit?: "tokens"; // only set for services billed on token usage
   costPerUnit?: number; // $ per token, only set when unit is "tokens"
@@ -28,6 +29,7 @@ export const SERVICE_CATALOG: ServiceDef[] = [
   {
     id: "openai",
     name: "OpenAI API (GPT-4o)",
+    provider: "OpenAI",
     category: "ai",
     unit: "tokens",
     costPerUnit: 0.000005,
@@ -37,6 +39,7 @@ export const SERVICE_CATALOG: ServiceDef[] = [
   {
     id: "claude",
     name: "Anthropic Claude API",
+    provider: "Anthropic",
     category: "ai",
     unit: "tokens",
     costPerUnit: 0.000006,
@@ -46,6 +49,7 @@ export const SERVICE_CATALOG: ServiceDef[] = [
   {
     id: "ec2",
     name: "AWS EC2 (production servers)",
+    provider: "AWS",
     category: "cloud",
     baseline: [95, 102, 98, 101, 97, 103, 99, 100, 96, 104, 98, 101, 99],
     contextNote: "No recent deploys.",
@@ -53,6 +57,7 @@ export const SERVICE_CATALOG: ServiceDef[] = [
   {
     id: "s3",
     name: "AWS S3 (storage)",
+    provider: "AWS",
     category: "cloud",
     baseline: [38, 41, 39, 42, 40, 43, 38, 44, 39, 42, 40, 41, 39],
     contextNote: "Storage grows slowly and predictably.",
@@ -60,6 +65,7 @@ export const SERVICE_CATALOG: ServiceDef[] = [
   {
     id: "vercel",
     name: "Vercel (hosting)",
+    provider: "Vercel",
     category: "other",
     baseline: [14, 16, 15, 17, 15, 16, 14, 18, 15, 16, 15, 17, 16],
     contextNote: "Flat hosting plan, rarely changes.",

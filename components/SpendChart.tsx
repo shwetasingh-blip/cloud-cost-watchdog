@@ -1,22 +1,21 @@
 interface SpendChartProps {
   data: number[];
   variant?: "neutral" | "alert" | "growth" | "paused";
-  gradientId: string;
+  width?: number;
+  height?: number;
 }
 
 const COLORS: Record<NonNullable<SpendChartProps["variant"]>, string> = {
-  neutral: "#8e8e93",
-  alert: "#ff3b30",
-  growth: "#ff9500",
-  paused: "#34c759",
+  neutral: "#A1A1AA",
+  alert: "#DC2626",
+  growth: "#D97706",
+  paused: "#16A34A",
 };
 
-// A small, hand-rolled sparkline with a soft gradient fill underneath,
-// styled after the mini-charts in Apple's Stocks / Health apps.
-export default function SpendChart({ data, variant = "neutral", gradientId }: SpendChartProps) {
-  const width = 180;
-  const height = 56;
-  const pad = 6;
+// A small, restrained sparkline — line only, no fill or gradient, in
+// line with a data-table's quieter visual register.
+export default function SpendChart({ data, variant = "neutral", width = 96, height = 28 }: SpendChartProps) {
+  const pad = 3;
 
   if (data.length < 2) return null;
 
@@ -30,9 +29,10 @@ export default function SpendChart({ data, variant = "neutral", gradientId }: Sp
     return [x, y];
   };
 
-  const points = data.map(toXY);
-  const lineStr = points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-  const areaStr = `${pad},${height - pad} ${lineStr} ${width - pad},${height - pad}`;
+  const lineStr = data
+    .map(toXY)
+    .map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`)
+    .join(" ");
   const stroke = COLORS[variant];
 
   return (
@@ -44,21 +44,7 @@ export default function SpendChart({ data, variant = "neutral", gradientId }: Sp
       role="img"
       aria-label="Daily spend trend, last 14 days"
     >
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={stroke} stopOpacity="0.22" />
-          <stop offset="100%" stopColor={stroke} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon points={areaStr} fill={`url(#${gradientId})`} stroke="none" />
-      <polyline
-        points={lineStr}
-        fill="none"
-        stroke={stroke}
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <polyline points={lineStr} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
