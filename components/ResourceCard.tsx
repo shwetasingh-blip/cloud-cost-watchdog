@@ -8,10 +8,18 @@ interface ResourceCardProps {
   pausing: boolean;
 }
 
+function formatTokens(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M tokens`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K tokens`;
+  return `${Math.round(tokens)} tokens`;
+}
+
 export default function ResourceCard({ resource, onPause, pausing }: ResourceCardProps) {
   const { stats } = resource;
   const percentChange = stats.mean > 0 ? ((stats.latest - stats.mean) / stats.mean) * 100 : 0;
   const latestValue = resource.dailySpend[resource.dailySpend.length - 1];
+  const tokensToday =
+    resource.unit === "tokens" && resource.costPerUnit ? latestValue / resource.costPerUnit : null;
 
   let variant: "neutral" | "alert" | "growth" | "paused" = "neutral";
   if (resource.paused) variant = "paused";
@@ -34,11 +42,22 @@ export default function ResourceCard({ resource, onPause, pausing }: ResourceCar
           )}
         </div>
 
+        {tokensToday !== null && (
+          <p className="resource__tokens">{formatTokens(tokensToday)} today</p>
+        )}
+
         {!stats.flagged && !resource.paused && <p className="resource__meta">Within normal range</p>}
 
         {resource.paused && <p className="resource__meta resource__meta--green">Paused, spend stopped</p>}
 
-        {stats.flagged && !resource.paused && (
+        {stats.flagged && !resource.paused && resource.explaining && (
+          <div className="callout callout--thinking">
+            <span className="callout__badge">AI</span>
+            <p className="callout__text">Reading the numbers…</p>
+          </div>
+        )}
+
+        {stats.flagged && !resource.paused && !resource.explaining && resource.explanation && (
           <>
             <div className="callout">
               <span className="callout__badge">AI</span>

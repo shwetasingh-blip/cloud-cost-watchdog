@@ -359,3 +359,158 @@ body {
     align-items: flex-start;
   }
 }
+
+/* Live indicator */
+.live-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  margin-right: 5px;
+  animation: livepulse 1.8s ease-in-out infinite;
+}
+
+@keyframes livepulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.4);
+  }
+  50% {
+    opacity: 0.6;
+    box-shadow: 0 0 0 4px rgba(52, 199, 89, 0);
+  }
+}
+
+/* Category sections */
+.category-section {
+  margin-bottom: 28px;
+}
+
+.resource__tokens {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 4px;
+}
+
+.callout--thinking .callout__text {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Simulate button */
+.simulate-btn {
+  display: block;
+  margin: 8px auto 0;
+  background: none;
+  border: 1px dashed rgba(0, 0, 0, 0.15);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.simulate-btn:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+/* Connect accounts screen */
+.connect {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.connect__card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--surface);
+  border-radius: 20px;
+  padding: 32px 28px;
+  box-shadow: var(--shadow);
+}
+
+.connect__title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  letter-spacing: -0.01em;
+}
+
+.connect__subtitle {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  margin: 0 0 24px;
+}
+
+.connect__list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.connect__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.connect__row-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #e8e8ed;
+  color: var(--text-primary);
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.connect__row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.connect__row-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.connect__row-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.btn--connect {
+  background: var(--blue);
+  color: white;
+}
+
+.btn--connected {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.btn--continue {
+  width: 100%;
+  background: var(--text-primary);
+  color: white;
+  padding: 12px;
+  font-size: 14px;
+}
+
+.btn--continue:disabled {
+  opacity: 0.35;
+  cursor: default;
+}

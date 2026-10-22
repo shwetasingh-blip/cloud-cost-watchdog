@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getScenario, Scenario } from "@/lib/mockData";
+import { getServiceDef } from "@/lib/mockData";
 
 // Simulated action only — no real cloud API is called. Confirms the
 // resource is one we know about, then reports success so the page can
@@ -9,15 +9,12 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => null);
     const resourceId = body?.resourceId;
-    const scenario: Scenario = body?.scenario === "calm" ? "calm" : "spike";
 
     if (!resourceId || typeof resourceId !== "string") {
       return NextResponse.json({ error: "Missing resourceId." }, { status: 400 });
     }
 
-    const resources = getScenario(scenario);
-    const exists = resources.some((r) => r.id === resourceId);
-    if (!exists) {
+    if (!getServiceDef(resourceId)) {
       return NextResponse.json({ error: "Unknown resource." }, { status: 400 });
     }
 
