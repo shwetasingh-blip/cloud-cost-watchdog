@@ -7,7 +7,6 @@ export interface LogEvent {
   timestamp: number;
 }
 
-export const EVENTS_KEY = "bw_events";
 export const MAX_EVENTS = 50;
 
 export function makeEvent(type: EventType, message: string): LogEvent {

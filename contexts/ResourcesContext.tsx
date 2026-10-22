@@ -10,41 +10,53 @@ import {
   initialDailySpend,
   tickLiveSpend,
   stepToward,
-  createCustomServiceDef,
   type ServiceDef,
   type CustomServiceInput,
 } from "@/lib/mockData";
 import { analyzeSpend, estimateRunwayDaysLost } from "@/lib/anomalyDetection";
 import { formatCurrency, formatPercent } from "@/lib/format";
-import { type LogEvent, type EventType, makeEvent, EVENTS_KEY, MAX_EVENTS } from "@/lib/eventLog";
+import { type LogEvent, type EventType, makeEvent, MAX_EVENTS } from "@/lib/eventLog";
 
 const CONNECTED_KEY = "ccw_connected";
-const CUSTOM_CATALOG_KEY = "bw_custom_services";
 export const TICK_MS = 2500;
 const HEARTBEAT_EVERY_N_TICKS = 12; // ~30s at TICK_MS=2500
 
-function loadPersistedEvents(): LogEvent[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(EVENTS_KEY);
-    return raw ? (JSON.parse(raw) as LogEvent[]) : [];
-  } catch {
-    return [];
-  }
+interface SharedState {
+  customServices: ServiceDef[];
+  pausedIds: string[];
+  events: LogEvent[];
 }
 
-function loadCustomCatalog(): ServiceDef[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(CUSTOM_CATALOG_KEY);
-    return raw ? (JSON.parse(raw) as ServiceDef[]) : [];
-  } catch {
-    return [];
-  }
+// The only thing standing between "it works for me" and "it works for
+// everyone": this reads the shared database (through our own API, which
+// holds the only credentials) instead of this browser's localStorage.
+async function fetchSharedState(): Promise<SharedState> {
+  const res = await fetch("/api/state");
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || "Could not load shared state");
+  return { customServices: data.customServices ?? [], pausedIds: data.pausedIds ?? [], events: data.events ?? [] };
 }
 
-function toResourceResult(service: ServiceDef, isCustom: boolean): ResourceResult {
+function toResourceResult(service: ServiceDef, isCustom: boolean, pausedIds: Set<string>): ResourceResult {
   const dailySpend = initialDailySpend(service);
+  const stats = analyzeSpend(dailySpend);
+  if (pausedIds.has(service.id)) {
+    const flat = stats.mean;
+    const flatSpend = [...dailySpend.slice(0, -1), flat];
+    return {
+      id: service.id,
+      name: service.name,
+      provider: service.provider,
+      category: service.category,
+      unit: service.unit,
+      costPerUnit: service.costPerUnit,
+      contextNote: service.contextNote,
+      dailySpend: flatSpend,
+      stats: analyzeSpend(flatSpend),
+      paused: true,
+      isCustom,
+    };
+  }
   return {
     id: service.id,
     name: service.name,
@@ -54,16 +66,17 @@ function toResourceResult(service: ServiceDef, isCustom: boolean): ResourceResul
     costPerUnit: service.costPerUnit,
     contextNote: service.contextNote,
     dailySpend,
-    stats: analyzeSpend(dailySpend),
+    stats,
     paused: false,
     isCustom,
   };
 }
 
-function buildInitialResources(customCatalog: ServiceDef[]): ResourceResult[] {
+function buildInitialResources(customCatalog: ServiceDef[], pausedIds: string[]): ResourceResult[] {
+  const paused = new Set(pausedIds);
   return [
-    ...SERVICE_CATALOG.map((s) => toResourceResult(s, false)),
-    ...customCatalog.map((s) => toResourceResult(s, true)),
+    ...SERVICE_CATALOG.map((s) => toResourceResult(s, false, paused)),
+    ...customCatalog.map((s) => toResourceResult(s, true, paused)),
   ];
 }
 
@@ -102,18 +115,11 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
   const [pausingId, setPausingId] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [checksRun, setChecksRun] = useState(0);
-  // A lazy initializer runs synchronously on the very first render, before
-  // any effect (including the write-effect below that persists this same
-  // state back to storage). Reading it in a useEffect instead created a
-  // real race: on a full reload, React's dev-mode double-mount let the
-  // write-effect fire once with the still-default empty array before the
-  // read-effect's result ever landed, permanently clobbering saved history
-  // with "[]". A pure lazy initializer has no such window.
-  const [events, setEvents] = useState<LogEvent[]>(loadPersistedEvents);
-  const [customCatalog, setCustomCatalog] = useState<ServiceDef[]>(loadCustomCatalog);
+  const [events, setEvents] = useState<LogEvent[]>([]);
+  const [customCatalog, setCustomCatalog] = useState<ServiceDef[]>([]);
   const rampTargets = useRef<Record<string, number>>({});
   const ticksRef = useRef(0);
-  const customCatalogRef = useRef<ServiceDef[]>(customCatalog);
+  const customCatalogRef = useRef<ServiceDef[]>([]);
 
   // Every change — ticks, explain responses, pauses — routes through these
   // ref-backed helpers so each state transition applies exactly once, even
@@ -127,31 +133,48 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     setResources(next);
   }, []);
 
-  const eventsRef = useRef<LogEvent[]>(events);
+  const eventsRef = useRef<LogEvent[]>([]);
   const logEvent = useCallback((type: EventType, message: string) => {
     const next = [makeEvent(type, message), ...eventsRef.current].slice(0, MAX_EVENTS);
     eventsRef.current = next;
     setEvents(next);
+    // Fire-and-forget: the UI already updated optimistically above. If this
+    // fails, the event simply won't be visible to other sessions — not
+    // worth blocking or erroring the interaction that triggered it.
+    fetch("/api/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, message }),
+    }).catch(() => {});
+  }, []);
+
+  const loadEverything = useCallback(async () => {
+    try {
+      const shared = await fetchSharedState();
+      customCatalogRef.current = shared.customServices;
+      setCustomCatalog(shared.customServices);
+      eventsRef.current = shared.events;
+      setEvents(shared.events);
+      const initial = buildInitialResources(shared.customServices, shared.pausedIds);
+      resourcesRef.current = initial;
+      setResources(initial);
+      setLastUpdated(Date.now());
+    } catch {
+      // Shared backend unreachable — still usable with just the built-in
+      // services, so the dashboard isn't blank; flag it honestly instead.
+      const initial = buildInitialResources([], []);
+      resourcesRef.current = initial;
+      setResources(initial);
+      setLastUpdated(Date.now());
+      setError("Could not reach the shared database — showing built-in services only.");
+    }
   }, []);
 
   useEffect(() => {
     const stored = typeof window !== "undefined" && window.localStorage.getItem(CONNECTED_KEY) === "true";
     setConnected(stored);
-    if (stored) {
-      const initial = buildInitialResources(customCatalogRef.current);
-      resourcesRef.current = initial;
-      setResources(initial);
-      setLastUpdated(Date.now());
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
-    } catch {
-      // ignore storage failures, the log still works for this session
-    }
-  }, [events]);
+    if (stored) loadEverything();
+  }, [loadEverything]);
 
   const handleConnectDone = useCallback(() => {
     try {
@@ -159,13 +182,11 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     } catch {
       // ignore storage failures, the session still works, just re-asks next visit
     }
-    const initial = buildInitialResources(customCatalogRef.current);
-    resourcesRef.current = initial;
-    setResources(initial);
-    setLastUpdated(Date.now());
     setConnected(true);
-    logEvent("connect", "Connected AWS, OpenAI, Anthropic, Vercel — monitoring started");
-  }, [logEvent]);
+    loadEverything().then(() => {
+      logEvent("connect", "Connected AWS, OpenAI, Anthropic, Vercel — monitoring started");
+    });
+  }, [loadEverything, logEvent]);
 
   const handleDisconnect = useCallback(() => {
     try {
@@ -323,37 +344,51 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     rampTargets.current[SPIKE_TARGET_ID] = SPIKE_TARGET_VALUE;
   }, []);
 
-  const persistCustomCatalog = useCallback((next: ServiceDef[]) => {
-    customCatalogRef.current = next;
-    setCustomCatalog(next);
-    try {
-      window.localStorage.setItem(CUSTOM_CATALOG_KEY, JSON.stringify(next));
-    } catch {
-      // ignore storage failures, the platform still works for this session
-    }
-  }, []);
-
   const handleAddService = useCallback(
-    (input: CustomServiceInput) => {
-      const def = createCustomServiceDef(input);
-      persistCustomCatalog([...customCatalogRef.current, def]);
-      const resource = toResourceResult(def, true);
-      applyResources((prev) => [...prev, resource]);
-      logEvent("service", `Added ${def.name} as a new connected service`);
+    async (input: CustomServiceInput) => {
+      try {
+        const res = await fetch("/api/services", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || "Could not add platform");
+        const def: ServiceDef = data.service;
+        customCatalogRef.current = [...customCatalogRef.current, def];
+        setCustomCatalog(customCatalogRef.current);
+        const resource = toResourceResult(def, true, new Set());
+        applyResources((prev) => [...prev, resource]);
+        logEvent("service", `Added ${def.name} as a new connected service`);
+      } catch {
+        setError("Could not add that platform — try again.");
+      }
     },
-    [applyResources, logEvent, persistCustomCatalog]
+    [applyResources, logEvent]
   );
 
   const handleRemoveService = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const def = customCatalogRef.current.find((d) => d.id === id);
       if (!def) return; // only user-added platforms can be removed
-      delete rampTargets.current[id];
-      persistCustomCatalog(customCatalogRef.current.filter((d) => d.id !== id));
-      applyResources((prev) => prev.filter((r) => r.id !== id));
-      logEvent("service", `Removed ${def.name} from connected services`);
+      try {
+        const res = await fetch("/api/services", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || "Could not remove platform");
+        delete rampTargets.current[id];
+        customCatalogRef.current = customCatalogRef.current.filter((d) => d.id !== id);
+        setCustomCatalog(customCatalogRef.current);
+        applyResources((prev) => prev.filter((r) => r.id !== id));
+        logEvent("service", `Removed ${def.name} from connected services`);
+      } catch {
+        setError("Could not remove that platform — try again.");
+      }
     },
-    [applyResources, logEvent, persistCustomCatalog]
+    [applyResources, logEvent]
   );
 
   const refreshNow = useCallback(() => {
