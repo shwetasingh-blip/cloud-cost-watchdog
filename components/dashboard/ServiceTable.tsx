@@ -3,7 +3,7 @@
 import SpendChart from "@/components/SpendChart";
 import type { ResourceResult } from "@/lib/types";
 import { formatCurrency, formatTokens } from "@/lib/format";
-import { PauseGlyph } from "@/components/icons";
+import { PauseGlyph, TrashIcon } from "@/components/icons";
 import { useResources } from "@/contexts/ResourcesContext";
 
 interface ServiceTableProps {
@@ -22,7 +22,7 @@ function StatusBadge({ resource }: { resource: ResourceResult }) {
 }
 
 export default function ServiceTable({ resources }: ServiceTableProps) {
-  const { handlePause, pausingId } = useResources();
+  const { handlePause, pausingId, handleRemoveService } = useResources();
 
   if (resources.length === 0) {
     return <div className="table-empty">No connected services yet.</div>;
@@ -79,6 +79,11 @@ export default function ServiceTable({ resources }: ServiceTableProps) {
                     >
                       <PauseGlyph size={12} />
                       {pausingId === r.id ? "Pausing…" : "Pause"}
+                    </button>
+                  ) : r.isCustom ? (
+                    <button className="btn-table-remove" onClick={() => handleRemoveService(r.id)}>
+                      <TrashIcon size={12} />
+                      Remove
                     </button>
                   ) : (
                     <span className="service-table__dash">—</span>

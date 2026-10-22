@@ -80,6 +80,51 @@ function average(nums: number[]): number {
   return nums.reduce((sum, n) => sum + n, 0) / (nums.length || 1);
 }
 
+export interface CustomServiceInput {
+  name: string;
+  provider: string;
+  category: Category;
+  estimatedDailySpend: number;
+  billedInTokens: boolean;
+  costPerMillionTokens?: number;
+}
+
+// A fixed 13-day history generated around the spend the user told us
+// to expect, with the same mild day-to-day noise as the built-in
+// services — so a newly added platform looks like it belongs, not
+// like a flat placeholder.
+function generateBaseline(estimatedDaily: number): number[] {
+  const mean = Math.max(1, estimatedDaily);
+  return Array.from({ length: 13 }, () => {
+    const noise = (Math.random() - 0.5) * 2 * mean * 0.06;
+    return Math.max(0, Math.round((mean + noise) * 100) / 100);
+  });
+}
+
+function slugify(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+  return `${base || "service"}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+export function createCustomServiceDef(input: CustomServiceInput): ServiceDef {
+  return {
+    id: slugify(input.name),
+    name: input.name,
+    provider: input.provider.trim() || input.name,
+    category: input.category,
+    unit: input.billedInTokens ? "tokens" : undefined,
+    costPerUnit:
+      input.billedInTokens && input.costPerMillionTokens
+        ? input.costPerMillionTokens / 1_000_000
+        : undefined,
+    baseline: generateBaseline(input.estimatedDailySpend),
+    contextNote: "Added manually — no deploy or incident context available yet.",
+  };
+}
+
 // The starting "today" value for each service: close to its own
 // baseline average, with a touch of noise so it isn't perfectly flat
 // on first load.

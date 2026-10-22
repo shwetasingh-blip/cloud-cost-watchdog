@@ -10,6 +10,7 @@ export interface ResourceResult {
   category: Category;
   unit?: "tokens";
   costPerUnit?: number;
+  contextNote: string;
   dailySpend: number[];
   stats: AnomalyStats;
   explanation?: string;
@@ -18,4 +19,5 @@ export interface ResourceResult {
   explaining?: boolean;
   paused: boolean;
   flaggedAt?: number; // epoch ms, set the moment a resource is first flagged
+  isCustom?: boolean; // user-added platform, not one of the 5 built-ins
 }

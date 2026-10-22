@@ -14,7 +14,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing resourceId." }, { status: 400 });
     }
 
-    if (!getServiceDef(resourceId)) {
+    // A built-in service is verified against the server's own catalog; a
+    // user-added platform only exists in the browser's storage, so the
+    // client vouches for it with its own name instead.
+    const isKnownBuiltIn = Boolean(getServiceDef(resourceId));
+    const isKnownCustom = typeof body?.resourceName === "string" && body.resourceName.trim().length > 0;
+    if (!isKnownBuiltIn && !isKnownCustom) {
       return NextResponse.json({ error: "Unknown resource." }, { status: 400 });
     }
 

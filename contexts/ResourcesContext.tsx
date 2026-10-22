@@ -10,12 +10,16 @@ import {
   initialDailySpend,
   tickLiveSpend,
   stepToward,
+  createCustomServiceDef,
+  type ServiceDef,
+  type CustomServiceInput,
 } from "@/lib/mockData";
 import { analyzeSpend, estimateRunwayDaysLost } from "@/lib/anomalyDetection";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import { type LogEvent, type EventType, makeEvent, EVENTS_KEY, MAX_EVENTS } from "@/lib/eventLog";
 
 const CONNECTED_KEY = "ccw_connected";
+const CUSTOM_CATALOG_KEY = "bw_custom_services";
 export const TICK_MS = 2500;
 const HEARTBEAT_EVERY_N_TICKS = 12; // ~30s at TICK_MS=2500
 
@@ -29,21 +33,38 @@ function loadPersistedEvents(): LogEvent[] {
   }
 }
 
-function buildInitialResources(): ResourceResult[] {
-  return SERVICE_CATALOG.map((service) => {
-    const dailySpend = initialDailySpend(service);
-    return {
-      id: service.id,
-      name: service.name,
-      provider: service.provider,
-      category: service.category,
-      unit: service.unit,
-      costPerUnit: service.costPerUnit,
-      dailySpend,
-      stats: analyzeSpend(dailySpend),
-      paused: false,
-    };
-  });
+function loadCustomCatalog(): ServiceDef[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_CATALOG_KEY);
+    return raw ? (JSON.parse(raw) as ServiceDef[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function toResourceResult(service: ServiceDef, isCustom: boolean): ResourceResult {
+  const dailySpend = initialDailySpend(service);
+  return {
+    id: service.id,
+    name: service.name,
+    provider: service.provider,
+    category: service.category,
+    unit: service.unit,
+    costPerUnit: service.costPerUnit,
+    contextNote: service.contextNote,
+    dailySpend,
+    stats: analyzeSpend(dailySpend),
+    paused: false,
+    isCustom,
+  };
+}
+
+function buildInitialResources(customCatalog: ServiceDef[]): ResourceResult[] {
+  return [
+    ...SERVICE_CATALOG.map((s) => toResourceResult(s, false)),
+    ...customCatalog.map((s) => toResourceResult(s, true)),
+  ];
 }
 
 interface ResourcesContextValue {
@@ -68,6 +89,8 @@ interface ResourcesContextValue {
   handleConnectDone: () => void;
   handleDisconnect: () => void;
   refreshNow: () => void;
+  handleAddService: (input: CustomServiceInput) => void;
+  handleRemoveService: (id: string) => void;
 }
 
 const ResourcesContext = createContext<ResourcesContextValue | null>(null);
@@ -87,8 +110,10 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
   // read-effect's result ever landed, permanently clobbering saved history
   // with "[]". A pure lazy initializer has no such window.
   const [events, setEvents] = useState<LogEvent[]>(loadPersistedEvents);
+  const [customCatalog, setCustomCatalog] = useState<ServiceDef[]>(loadCustomCatalog);
   const rampTargets = useRef<Record<string, number>>({});
   const ticksRef = useRef(0);
+  const customCatalogRef = useRef<ServiceDef[]>(customCatalog);
 
   // Every change — ticks, explain responses, pauses — routes through these
   // ref-backed helpers so each state transition applies exactly once, even
@@ -113,7 +138,7 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     const stored = typeof window !== "undefined" && window.localStorage.getItem(CONNECTED_KEY) === "true";
     setConnected(stored);
     if (stored) {
-      const initial = buildInitialResources();
+      const initial = buildInitialResources(customCatalogRef.current);
       resourcesRef.current = initial;
       setResources(initial);
       setLastUpdated(Date.now());
@@ -134,7 +159,7 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     } catch {
       // ignore storage failures, the session still works, just re-asks next visit
     }
-    const initial = buildInitialResources();
+    const initial = buildInitialResources(customCatalogRef.current);
     resourcesRef.current = initial;
     setResources(initial);
     setLastUpdated(Date.now());
@@ -158,12 +183,18 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
 
   const requestExplanation = useCallback(
     async (id: string, dailySpend: number[]) => {
-      const name = resourcesRef.current.find((r) => r.id === id)?.name ?? id;
+      const resource = resourcesRef.current.find((r) => r.id === id);
+      const name = resource?.name ?? id;
       try {
         const res = await fetch("/api/explain", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ resourceId: id, dailySpend }),
+          body: JSON.stringify({
+            resourceId: id,
+            dailySpend,
+            resourceName: resource?.name,
+            contextNote: resource?.contextNote,
+          }),
         });
         const data = await res.json();
         if (!res.ok || data.error) throw new Error(data.error || "Explain failed");
@@ -267,7 +298,7 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
         const res = await fetch("/api/pause", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ resourceId: id }),
+          body: JSON.stringify({ resourceId: id, resourceName: name }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || "Pause failed");
@@ -291,6 +322,39 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
   const handleSimulateSpike = useCallback(() => {
     rampTargets.current[SPIKE_TARGET_ID] = SPIKE_TARGET_VALUE;
   }, []);
+
+  const persistCustomCatalog = useCallback((next: ServiceDef[]) => {
+    customCatalogRef.current = next;
+    setCustomCatalog(next);
+    try {
+      window.localStorage.setItem(CUSTOM_CATALOG_KEY, JSON.stringify(next));
+    } catch {
+      // ignore storage failures, the platform still works for this session
+    }
+  }, []);
+
+  const handleAddService = useCallback(
+    (input: CustomServiceInput) => {
+      const def = createCustomServiceDef(input);
+      persistCustomCatalog([...customCatalogRef.current, def]);
+      const resource = toResourceResult(def, true);
+      applyResources((prev) => [...prev, resource]);
+      logEvent("service", `Added ${def.name} as a new connected service`);
+    },
+    [applyResources, logEvent, persistCustomCatalog]
+  );
+
+  const handleRemoveService = useCallback(
+    (id: string) => {
+      const def = customCatalogRef.current.find((d) => d.id === id);
+      if (!def) return; // only user-added platforms can be removed
+      delete rampTargets.current[id];
+      persistCustomCatalog(customCatalogRef.current.filter((d) => d.id !== id));
+      applyResources((prev) => prev.filter((r) => r.id !== id));
+      logEvent("service", `Removed ${def.name} from connected services`);
+    },
+    [applyResources, logEvent, persistCustomCatalog]
+  );
 
   const refreshNow = useCallback(() => {
     tick();
@@ -347,6 +411,8 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     handleConnectDone,
     handleDisconnect,
     refreshNow,
+    handleAddService,
+    handleRemoveService,
   };
 
   return <ResourcesContext.Provider value={value}>{children}</ResourcesContext.Provider>;

@@ -16,6 +16,7 @@ const TYPE_LABEL: Record<EventType, string> = {
   explained: "AI",
   pause: "Paused",
   heartbeat: "Check",
+  service: "Service",
 };
 
 export default function ActivityLog({ events, limit }: ActivityLogProps) {

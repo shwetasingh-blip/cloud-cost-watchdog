@@ -17,8 +17,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing resourceId or dailySpend." }, { status: 400 });
     }
 
+    // Known built-in services are looked up server-side as before. A
+    // user-added platform only exists in the browser's own storage, so
+    // the client sends its name/context along; either way the numbers
+    // themselves are always recomputed here, never trusted from the client.
     const service = getServiceDef(resourceId);
-    if (!service) {
+    const resourceName = service?.name ?? (typeof body?.resourceName === "string" ? body.resourceName.slice(0, 80) : undefined);
+    const contextNote = service?.contextNote ?? (typeof body?.contextNote === "string" ? body.contextNote.slice(0, 200) : "");
+
+    if (!resourceName) {
       return NextResponse.json({ error: "Unknown resource." }, { status: 400 });
     }
 
@@ -28,10 +35,10 @@ export async function POST(req: NextRequest) {
 
     try {
       const ai = await explainAnomaly({
-        resourceName: service.name,
+        resourceName,
         dailySpend,
         stats,
-        contextNote: service.contextNote,
+        contextNote,
         runwayDaysLost,
       });
       return NextResponse.json({ stats, explanation: ai.explanation, verdict: ai.verdict, aiError: false });
