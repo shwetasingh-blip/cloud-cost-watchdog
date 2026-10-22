@@ -15,17 +15,26 @@ function KpiCard({
   value,
   caption,
   tone,
+  deltaPct,
 }: {
   label: string;
   value: string;
   caption: string;
   tone?: "critical" | "good";
+  deltaPct?: number;
 }) {
   return (
     <div className="kpi-card">
       <span className="kpi-card__label">{label}</span>
       <span className={tone ? `kpi-card__value kpi-card__value--${tone}` : "kpi-card__value"}>{value}</span>
-      <span className="kpi-card__caption">{caption}</span>
+      <span className="kpi-card__caption">
+        {caption}
+        {typeof deltaPct === "number" && (
+          <span className={`delta-pill ${deltaPct > 0 ? "delta-pill--bad" : "delta-pill--good"}`}>
+            {formatPercent(deltaPct)}
+          </span>
+        )}
+      </span>
     </div>
   );
 }
@@ -38,7 +47,8 @@ export default function KpiRow({ totalSpendToday, spendDeltaPct, flaggedCount, c
       <KpiCard
         label="Total monitored spend"
         value={formatCurrency(totalSpendToday)}
-        caption={`Today · ${formatPercent(spendDeltaPct)} vs 13-day avg`}
+        caption="Today vs 13-day avg"
+        deltaPct={spendDeltaPct}
       />
       <KpiCard
         label="Active anomalies"

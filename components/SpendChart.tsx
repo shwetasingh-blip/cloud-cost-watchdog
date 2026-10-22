@@ -6,10 +6,10 @@ interface SpendChartProps {
 }
 
 const COLORS: Record<NonNullable<SpendChartProps["variant"]>, string> = {
-  neutral: "#A1A1AA",
-  alert: "#DC2626",
-  growth: "#D97706",
-  paused: "#16A34A",
+  neutral: "#9AA0B4",
+  alert: "#FB7185",
+  growth: "#FBBF24",
+  paused: "#5EEAD4",
 };
 
 // A small, restrained sparkline — line only, no fill or gradient, in

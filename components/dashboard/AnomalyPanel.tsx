@@ -6,6 +6,7 @@ import { estimateRunwayDaysLost } from "@/lib/anomalyDetection";
 import { COMPANY_MONTHLY_BURN } from "@/lib/mockData";
 import { estimateRequestVolume, isGuardrailBreached } from "@/lib/guardrails";
 import { useResources } from "@/contexts/ResourcesContext";
+import { AlertIcon } from "@/components/icons";
 
 interface AnomalyPanelProps {
   resource: ResourceResult;
@@ -44,12 +45,17 @@ export default function AnomalyPanel({ resource }: AnomalyPanelProps) {
   return (
     <div className={`anomaly-panel anomaly-panel--${severity}`}>
       <div className="anomaly-panel__header">
-        <div>
-          <div className="anomaly-panel__service">
-            {resource.name} <span className="anomaly-panel__provider">· {resource.provider}</span>
-          </div>
-          <div className="anomaly-panel__meta">
-            Detected {resource.flaggedAt ? formatRelativeTime(resource.flaggedAt, Date.now()) : "recently"}
+        <div className="anomaly-panel__heading">
+          <span className="anomaly-panel__icon" aria-hidden="true">
+            <AlertIcon size={16} />
+          </span>
+          <div>
+            <div className="anomaly-panel__service">
+              {resource.name} <span className="anomaly-panel__provider">· {resource.provider}</span>
+            </div>
+            <div className="anomaly-panel__meta">
+              Detected {resource.flaggedAt ? formatRelativeTime(resource.flaggedAt, Date.now()) : "recently"}
+            </div>
           </div>
         </div>
         <span className={`status-badge status-badge--${isGuardrailCase ? "warning" : severity}`}>
