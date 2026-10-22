@@ -5,12 +5,13 @@ import type { ResourceResult } from "@/lib/types";
 import { formatCurrency, formatTokens } from "@/lib/format";
 import { PauseGlyph, TrashIcon } from "@/components/icons";
 import { useResources } from "@/contexts/ResourcesContext";
+import { isGuardrailBreached } from "@/lib/guardrails";
 
 interface ServiceTableProps {
   resources: ResourceResult[];
 }
 
-function StatusBadge({ resource }: { resource: ResourceResult }) {
+function StatusBadge({ resource, overLimit }: { resource: ResourceResult; overLimit: boolean }) {
   if (resource.paused) return <span className="status-badge status-badge--good">Paused</span>;
   if (resource.stats.flagged)
     return (
@@ -18,11 +19,12 @@ function StatusBadge({ resource }: { resource: ResourceResult }) {
         Anomaly
       </span>
     );
+  if (overLimit) return <span className="status-badge status-badge--warning">Over limit</span>;
   return <span className="status-badge status-badge--neutral">Normal</span>;
 }
 
 export default function ServiceTable({ resources }: ServiceTableProps) {
-  const { handlePause, pausingId, handleRemoveService } = useResources();
+  const { handlePause, pausingId, handleRemoveService, guardrails } = useResources();
 
   if (resources.length === 0) {
     return <div className="table-empty">No connected services yet.</div>;
@@ -46,15 +48,16 @@ export default function ServiceTable({ resources }: ServiceTableProps) {
           {resources.map((r) => {
             const latest = r.dailySpend[r.dailySpend.length - 1];
             const tokensToday = r.unit === "tokens" && r.costPerUnit ? latest / r.costPerUnit : null;
+            const overLimit = isGuardrailBreached(guardrails[r.id], r.stats.latest);
             let variant: "neutral" | "alert" | "growth" | "paused" = "neutral";
             if (r.paused) variant = "paused";
             else if (r.stats.flagged && r.verdict === "likely_growth") variant = "growth";
-            else if (r.stats.flagged) variant = "alert";
+            else if (r.stats.flagged || overLimit) variant = "alert";
 
-            const actionable = r.stats.flagged && !r.paused;
+            const actionable = (r.stats.flagged || overLimit) && !r.paused;
 
             return (
-              <tr key={r.id} className={r.stats.flagged && !r.paused ? "service-table__row--flagged" : ""}>
+              <tr key={r.id} className={actionable ? "service-table__row--flagged" : ""}>
                 <td>
                   <span className="service-table__name">{r.name}</span>
                 </td>
@@ -68,7 +71,7 @@ export default function ServiceTable({ resources }: ServiceTableProps) {
                   <SpendChart data={r.dailySpend} variant={variant} width={72} height={24} />
                 </td>
                 <td>
-                  <StatusBadge resource={r} />
+                  <StatusBadge resource={r} overLimit={overLimit} />
                 </td>
                 <td>
                   {actionable ? (

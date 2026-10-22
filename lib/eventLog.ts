@@ -1,4 +1,4 @@
-export type EventType = "connect" | "disconnect" | "anomaly" | "explained" | "pause" | "heartbeat" | "service";
+export type EventType = "connect" | "disconnect" | "anomaly" | "explained" | "pause" | "heartbeat" | "service" | "guardrail" | "autostop";
 
 export interface LogEvent {
   id: string;

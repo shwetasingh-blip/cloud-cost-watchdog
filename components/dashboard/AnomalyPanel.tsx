@@ -4,6 +4,7 @@ import type { ResourceResult } from "@/lib/types";
 import { formatCurrency, formatPlainDeviation, formatRelativeTime } from "@/lib/format";
 import { estimateRunwayDaysLost } from "@/lib/anomalyDetection";
 import { COMPANY_MONTHLY_BURN } from "@/lib/mockData";
+import { estimateRequestVolume, isGuardrailBreached } from "@/lib/guardrails";
 import { useResources } from "@/contexts/ResourcesContext";
 
 interface AnomalyPanelProps {
@@ -19,15 +20,26 @@ function aiLabel(resource: ResourceResult): string {
 }
 
 export default function AnomalyPanel({ resource }: AnomalyPanelProps) {
-  const { handlePause, pausingId } = useResources();
+  const { handlePause, pausingId, guardrails } = useResources();
   const { stats } = resource;
-  const deviationPct = stats.mean > 0 ? ((stats.latest - stats.mean) / stats.mean) * 100 : 0;
+  const guardrail = guardrails[resource.id];
+  // A card can be here purely because it crossed a manually-set spend
+  // limit, with nothing statistically unusual about the spend itself.
+  // In that case every number on the card needs to be framed against the
+  // limit, not the historical baseline, or it reads as a contradiction.
+  const isGuardrailCase = !stats.flagged && isGuardrailBreached(guardrail, stats.latest);
+  const deviationBase = isGuardrailCase ? guardrail!.thresholdDollars : stats.mean;
+  const deviationPct = deviationBase > 0 ? ((stats.latest - deviationBase) / deviationBase) * 100 : 0;
   const severity = resource.verdict === "likely_growth" ? "warning" : "critical";
   const pausing = pausingId === resource.id;
 
-  const extraSpend = Math.max(0, stats.latest - stats.mean);
+  const extraSpend = Math.max(0, stats.latest - deviationBase);
   const hasBurnRate = COMPANY_MONTHLY_BURN > 0;
   const runwayDaysLost = hasBurnRate ? estimateRunwayDaysLost(extraSpend, COMPANY_MONTHLY_BURN) : 0;
+
+  const requests = estimateRequestVolume(resource.id, stats.latest, stats.mean);
+  const requestsPct = requests.baseline > 0 ? ((requests.today - requests.baseline) / requests.baseline) * 100 : 0;
+  const trackingTogether = Math.abs(requestsPct - deviationPct) < 40;
 
   return (
     <div className={`anomaly-panel anomaly-panel--${severity}`}>
@@ -40,8 +52,8 @@ export default function AnomalyPanel({ resource }: AnomalyPanelProps) {
             Detected {resource.flaggedAt ? formatRelativeTime(resource.flaggedAt, Date.now()) : "recently"}
           </div>
         </div>
-        <span className={`status-badge status-badge--${severity}`}>
-          {severity === "critical" ? "Likely waste" : "Possible growth"}
+        <span className={`status-badge status-badge--${isGuardrailCase ? "warning" : severity}`}>
+          {isGuardrailCase ? "Over your limit" : severity === "critical" ? "Likely waste" : "Possible growth"}
         </span>
       </div>
 
@@ -50,7 +62,9 @@ export default function AnomalyPanel({ resource }: AnomalyPanelProps) {
           <span className="anomaly-panel__runway-value">
             {runwayDaysLost > 0 ? `${runwayDaysLost} day${runwayDaysLost === 1 ? "" : "s"}` : "<1 day"}
           </span>
-          <span className="anomaly-panel__runway-label">of runway at risk from this spike</span>
+          <span className="anomaly-panel__runway-label">
+            of runway at risk {isGuardrailCase ? "if this stays over budget" : "from this spike"}
+          </span>
         </div>
       ) : (
         <p className="anomaly-panel__runway-fallback">
@@ -64,12 +78,14 @@ export default function AnomalyPanel({ resource }: AnomalyPanelProps) {
           <span className="measurement__value tabular">{formatCurrency(stats.latest)}</span>
         </div>
         <div className="measurement">
-          <span className="measurement__label">Expected baseline</span>
-          <span className="measurement__value tabular">{formatCurrency(stats.mean)}</span>
+          <span className="measurement__label">{isGuardrailCase ? "Your daily limit" : "Expected baseline"}</span>
+          <span className="measurement__value tabular">{formatCurrency(deviationBase)}</span>
         </div>
         <div className="measurement">
-          <span className="measurement__label">vs. usual</span>
-          <span className="measurement__value measurement__value--critical">{formatPlainDeviation(deviationPct)}</span>
+          <span className="measurement__label">{isGuardrailCase ? "vs. limit" : "vs. usual"}</span>
+          <span className="measurement__value measurement__value--critical">
+            {formatPlainDeviation(deviationPct, isGuardrailCase ? "your limit" : "your usual spend")}
+          </span>
         </div>
       </div>
 

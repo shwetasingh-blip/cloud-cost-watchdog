@@ -7,6 +7,7 @@ import SpendBreakdown from "@/components/dashboard/SpendBreakdown";
 import ServiceTable from "@/components/dashboard/ServiceTable";
 import AnomalyPanel from "@/components/dashboard/AnomalyPanel";
 import ActivityLog from "@/components/dashboard/ActivityLog";
+import ChatBox from "@/components/dashboard/ChatBox";
 import { useResources } from "@/contexts/ResourcesContext";
 
 export default function OverviewPage() {
@@ -24,6 +25,8 @@ export default function OverviewPage() {
         aiSpendToday={aiSpendToday}
         resources={resources}
       />
+
+      <ChatBox />
 
       {flagged.length > 0 && (
         <section className="panel">

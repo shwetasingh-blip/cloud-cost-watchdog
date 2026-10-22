@@ -25,13 +25,30 @@ export async function explainAnomaly(params: {
   stats: AnomalyStats;
   contextNote: string;
   runwayDaysLost: number;
+  // Set only when this call was triggered by a user-set spend limit, not
+  // the usual statistical detection. Without this, the model sees normal
+  // z-score numbers and (correctly, from its view) says "nothing's
+  // unusual" — which flatly contradicts an alert the user is looking at.
+  guardrailThresholdDollars?: number;
 }): Promise<AIExplanation> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("Missing GEMINI_API_KEY");
   }
 
-  const { resourceName, dailySpend, stats, contextNote, runwayDaysLost } = params;
+  const { resourceName, dailySpend, stats, contextNote, runwayDaysLost, guardrailThresholdDollars } = params;
+
+  const isGuardrail = typeof guardrailThresholdDollars === "number";
+
+  const instructionSection = isGuardrail
+    ? `Today's spend is NOT necessarily statistically unusual for this resource (see the z-score above — it may be close to normal). It was flagged because it reached or crossed the manually-set daily limit of $${guardrailThresholdDollars!.toFixed(
+        0
+      )} that the user configured, not because of a detected irregularity. Write ONE to TWO short, plain-English sentences: say plainly that the manual spend limit was crossed and by how much, note whether the underlying spend pattern itself looks normal or unusual, and state the runway impact using the number given above.`
+    : `Write ONE to TWO short, plain-English sentences a non-technical founder would understand: what's spiking, the likely cause (say "likely cause (unconfirmed):" if you are only guessing from limited context), and the runway impact using the number given above.`;
+
+  const verdictSection = isGuardrail
+    ? `Then decide: does the underlying spend pattern look like LIKELY_WASTE (something genuinely seems off, e.g. a bug or runaway process, even though it didn't trip the statistical check) or LIKELY_GROWTH (this is normal, expected spend that simply exceeds the limit you set)? If you genuinely can't tell, say UNCLEAR.`
+    : `Then decide: does this look like LIKELY_WASTE (a bug, misconfiguration, runaway process) or LIKELY_GROWTH (legitimate increased usage)? If you genuinely can't tell, say UNCLEAR.`;
 
   const prompt = `You are looking at cloud/AI spend data for one resource at a small startup.
 
@@ -39,13 +56,13 @@ Resource: ${resourceName}
 Last ${dailySpend.length} days of daily spend (USD): ${dailySpend.map((n) => n.toFixed(0)).join(", ")}
 Today's spend: $${stats.latest.toFixed(0)}
 Typical daily spend (baseline average): $${stats.mean.toFixed(0)}
-How unusual today is (z-score): ${stats.zScore.toFixed(1)}
-Extra context: ${contextNote || "none"}
+How unusual today is vs. its own history (z-score): ${stats.zScore.toFixed(1)}
+${isGuardrail ? `Manually-set daily spend limit for this resource: $${guardrailThresholdDollars!.toFixed(0)} (today's spend has reached or crossed this)\n` : ""}Extra context: ${contextNote || "none"}
 Estimated runway impact if this continues: about ${runwayDaysLost} day(s) of runway
 
-Write ONE to TWO short, plain-English sentences a non-technical founder would understand: what's spiking, the likely cause (say "likely cause (unconfirmed):" if you are only guessing from limited context), and the runway impact using the number given above. Do not invent numbers that aren't given above.
+${instructionSection} Do not invent numbers that aren't given above.
 
-Then decide: does this look like LIKELY_WASTE (a bug, misconfiguration, runaway process) or LIKELY_GROWTH (legitimate increased usage)? If you genuinely can't tell, say UNCLEAR.
+${verdictSection}
 
 Respond with ONLY valid JSON, no other text, in exactly this shape:
 {"explanation": "...", "verdict": "likely_waste" | "likely_growth" | "unclear"}`;

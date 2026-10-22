@@ -17,6 +17,7 @@ import {
 import { analyzeSpend, estimateRunwayDaysLost } from "@/lib/anomalyDetection";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import { generateQuickRead } from "@/lib/quickRead";
+import { type Guardrail, GUARDRAILS_KEY, isGuardrailBreached } from "@/lib/guardrails";
 import { type LogEvent, type EventType, makeEvent, EVENTS_KEY, MAX_EVENTS } from "@/lib/eventLog";
 
 const CONNECTED_KEY = "ccw_connected";
@@ -47,6 +48,16 @@ function loadCustomCatalog(): ServiceDef[] {
     return raw ? (JSON.parse(raw) as ServiceDef[]) : [];
   } catch {
     return [];
+  }
+}
+
+function loadGuardrails(): Record<string, Guardrail> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(GUARDRAILS_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, Guardrail>) : {};
+  } catch {
+    return {};
   }
 }
 
@@ -98,6 +109,9 @@ interface ResourcesContextValue {
   refreshNow: () => void;
   handleAddService: (input: CustomServiceInput) => void;
   handleRemoveService: (id: string) => void;
+  guardrails: Record<string, Guardrail>;
+  handleSetGuardrail: (guardrail: Guardrail) => void;
+  handleClearGuardrail: (resourceId: string) => void;
 }
 
 const ResourcesContext = createContext<ResourcesContextValue | null>(null);
@@ -118,9 +132,11 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
   // with "[]". A pure lazy initializer has no such window.
   const [events, setEvents] = useState<LogEvent[]>(loadPersistedEvents);
   const [customCatalog, setCustomCatalog] = useState<ServiceDef[]>(loadCustomCatalog);
+  const [guardrails, setGuardrails] = useState<Record<string, Guardrail>>(loadGuardrails);
   const rampTargets = useRef<Record<string, number>>({});
   const ticksRef = useRef(0);
   const customCatalogRef = useRef<ServiceDef[]>(customCatalog);
+  const guardrailsRef = useRef<Record<string, Guardrail>>(guardrails);
 
   // Every change — ticks, explain responses, pauses — routes through these
   // ref-backed helpers so each state transition applies exactly once, even
@@ -189,7 +205,7 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
   }, [logEvent]);
 
   const requestExplanation = useCallback(
-    async (id: string, dailySpend: number[]) => {
+    async (id: string, dailySpend: number[], guardrailThresholdDollars?: number) => {
       const resource = resourcesRef.current.find((r) => r.id === id);
       const name = resource?.name ?? id;
 
@@ -200,13 +216,17 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
       const quickReadTimer = setTimeout(() => {
         const current = resourcesRef.current.find((r) => r.id === id);
         if (!current || current.explanation) return; // real answer already landed
-        const extraSpend = Math.max(0, current.stats.latest - current.stats.mean);
+        const extraSpend =
+          typeof guardrailThresholdDollars === "number"
+            ? Math.max(0, current.stats.latest - guardrailThresholdDollars)
+            : Math.max(0, current.stats.latest - current.stats.mean);
         const runwayDaysLost = estimateRunwayDaysLost(extraSpend, COMPANY_MONTHLY_BURN);
         const quickText = generateQuickRead({
           resourceName: current.name,
           stats: current.stats,
           contextNote: current.contextNote,
           runwayDaysLost,
+          guardrailThresholdDollars,
         });
         applyResources((prev) =>
           prev.map((r) => (r.id === id && !r.explanation ? { ...r, explanation: quickText, verdict: "unclear", explanationSource: "quick" } : r))
@@ -222,6 +242,7 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
             dailySpend,
             resourceName: resource?.name,
             contextNote: resource?.contextNote,
+            guardrailThresholdDollars,
           }),
         });
         const data = await res.json();
@@ -266,7 +287,7 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
   );
 
   const tick = useCallback(() => {
-    const toExplain: { id: string; dailySpend: number[] }[] = [];
+    const toExplain: { id: string; dailySpend: number[]; guardrailThresholdDollars?: number }[] = [];
 
     applyResources((prev) =>
       prev.map((r) => {
@@ -293,12 +314,50 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
 
         const stats = analyzeSpend(newDailySpend);
         const eligibleForExplain = isRamping ? justArrived : true;
-        const newlyFlagged = eligibleForExplain && stats.flagged && !r.explanation;
+
+        const guardrail = guardrailsRef.current[r.id];
+        const guardrailBreached = eligibleForExplain && isGuardrailBreached(guardrail, stats.latest);
+
+        // Hard-stop: the one path that acts without a human tap. Enforced
+        // here again (not just in the Settings UI) since this is the one
+        // place that would be dangerous to get wrong — only ever reachable
+        // for a user-added platform with the toggle explicitly turned on.
+        if (guardrailBreached && guardrail?.hardStopEnabled && r.isCustom) {
+          const flat = stats.mean;
+          const flatSpend = [...newDailySpend.slice(1), flat, flat, flat];
+          logEvent(
+            "autostop",
+            `Auto-paused ${r.name} — guardrail hard-stop triggered at ${formatCurrency(stats.latest)}/day (limit was ${formatCurrency(guardrail.thresholdDollars)}/day)`
+          );
+          return {
+            ...r,
+            dailySpend: flatSpend,
+            stats: analyzeSpend(flatSpend),
+            paused: true,
+            explaining: false,
+          };
+        }
+
+        const newlyFlaggedByStats = eligibleForExplain && stats.flagged && !r.explanation;
+        const newlyFlaggedByGuardrail = guardrailBreached && !stats.flagged && !r.explanation;
+        const newlyFlagged = newlyFlaggedByStats || newlyFlaggedByGuardrail;
+
 
         if (newlyFlagged) {
-          toExplain.push({ id: r.id, dailySpend: newDailySpend });
+          toExplain.push({
+            id: r.id,
+            dailySpend: newDailySpend,
+            guardrailThresholdDollars: newlyFlaggedByGuardrail ? guardrail?.thresholdDollars : undefined,
+          });
           const pct = stats.mean > 0 ? ((stats.latest - stats.mean) / stats.mean) * 100 : 0;
-          logEvent("anomaly", `${r.name} spend spiked to ${formatCurrency(stats.latest)} (${formatPercent(pct)})`);
+          if (newlyFlaggedByGuardrail && guardrail) {
+            logEvent(
+              "guardrail",
+              `${r.name} breached its ${formatCurrency(guardrail.thresholdDollars)}/day limit — spend at ${formatCurrency(stats.latest)}/day`
+            );
+          } else {
+            logEvent("anomaly", `${r.name} spend spiked to ${formatCurrency(stats.latest)} (${formatPercent(pct)})`);
+          }
         }
 
         return {
@@ -319,7 +378,9 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
       logEvent("heartbeat", `Routine check complete — ${resourcesRef.current.length} services normal`);
     }
 
-    toExplain.forEach(({ id, dailySpend }) => requestExplanation(id, dailySpend));
+    toExplain.forEach(({ id, dailySpend, guardrailThresholdDollars }) =>
+      requestExplanation(id, dailySpend, guardrailThresholdDollars)
+    );
   }, [applyResources, requestExplanation, logEvent]);
 
   useEffect(() => {
@@ -362,6 +423,62 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     rampTargets.current[SPIKE_TARGET_ID] = SPIKE_TARGET_VALUE;
   }, []);
 
+  const handleSetGuardrail = useCallback(
+    (guardrail: Guardrail) => {
+      const next = { ...guardrailsRef.current, [guardrail.resourceId]: guardrail };
+      guardrailsRef.current = next;
+      setGuardrails(next);
+      try {
+        window.localStorage.setItem(GUARDRAILS_KEY, JSON.stringify(next));
+      } catch {
+        // ignore storage failures, the guardrail still works for this session
+      }
+
+      // If the new (or newly lowered) limit is already breached by
+      // today's spend, fire the alert right away instead of waiting up
+      // to one tick (~2.5s) for the interval to catch up.
+      const resource = resourcesRef.current.find((r) => r.id === guardrail.resourceId);
+      const alreadyHandled = !resource || resource.paused || resource.explaining || resource.explanation || resource.stats.flagged;
+      if (!alreadyHandled && resource && isGuardrailBreached(guardrail, resource.stats.latest)) {
+        if (guardrail.hardStopEnabled && resource.isCustom) {
+          const flat = resource.stats.mean;
+          const flatSpend = [...resource.dailySpend.slice(1), flat, flat, flat];
+          applyResources((prev) =>
+            prev.map((r) =>
+              r.id === resource.id ? { ...r, dailySpend: flatSpend, stats: analyzeSpend(flatSpend), paused: true, explaining: false } : r
+            )
+          );
+          logEvent(
+            "autostop",
+            `Auto-paused ${resource.name} — guardrail hard-stop triggered at ${formatCurrency(resource.stats.latest)}/day (limit was ${formatCurrency(guardrail.thresholdDollars)}/day)`
+          );
+        } else {
+          applyResources((prev) =>
+            prev.map((r) => (r.id === resource.id ? { ...r, explaining: true, flaggedAt: Date.now() } : r))
+          );
+          logEvent(
+            "guardrail",
+            `${resource.name} breached its ${formatCurrency(guardrail.thresholdDollars)}/day limit — spend at ${formatCurrency(resource.stats.latest)}/day`
+          );
+          requestExplanation(resource.id, resource.dailySpend, guardrail.thresholdDollars);
+        }
+      }
+    },
+    [applyResources, logEvent, requestExplanation]
+  );
+
+  const handleClearGuardrail = useCallback((resourceId: string) => {
+    const next = { ...guardrailsRef.current };
+    delete next[resourceId];
+    guardrailsRef.current = next;
+    setGuardrails(next);
+    try {
+      window.localStorage.setItem(GUARDRAILS_KEY, JSON.stringify(next));
+    } catch {
+      // ignore storage failures, the guardrail still works for this session
+    }
+  }, []);
+
   const persistCustomCatalog = useCallback((next: ServiceDef[]) => {
     customCatalogRef.current = next;
     setCustomCatalog(next);
@@ -399,7 +516,16 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     tick();
   }, [tick]);
 
-  const flagged = useMemo(() => resources.filter((r) => r.stats.flagged && !r.paused), [resources]);
+  // "Active" means either statistically unusual OR currently over a
+  // manually-set spend limit — a guardrail breach needs to show up here
+  // too, not just generate an explanation nobody can see.
+  const flagged = useMemo(
+    () =>
+      resources.filter(
+        (r) => !r.paused && (r.stats.flagged || isGuardrailBreached(guardrails[r.id], r.stats.latest))
+      ),
+    [resources, guardrails]
+  );
 
   const totalSpendToday = useMemo(
     () => resources.reduce((sum, r) => sum + r.dailySpend[r.dailySpend.length - 1], 0),
@@ -452,6 +578,9 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     refreshNow,
     handleAddService,
     handleRemoveService,
+    guardrails,
+    handleSetGuardrail,
+    handleClearGuardrail,
   };
 
   return <ResourcesContext.Provider value={value}>{children}</ResourcesContext.Provider>;

@@ -28,14 +28,14 @@ export function formatPercent(value: number): string {
 // Plain-English framing of a deviation — no "deviation," no raw stats
 // jargon. Switches to "Nx your usual spend" once the jump is large
 // enough that a plain percent stops being an intuitive read.
-export function formatPlainDeviation(pct: number): string {
+export function formatPlainDeviation(pct: number, reference: string = "your usual spend"): string {
   if (pct >= 100) {
     const multiplier = Math.floor(1 + pct / 100);
-    return `more than ${multiplier}x your usual spend`;
+    return `more than ${multiplier}x ${reference}`;
   }
-  if (pct > 0) return `${pct.toFixed(0)}% above your usual spend`;
-  if (pct < 0) return `${Math.abs(pct).toFixed(0)}% below your usual spend`;
-  return "right at your usual spend";
+  if (pct > 0) return `${pct.toFixed(0)}% above ${reference}`;
+  if (pct < 0) return `${Math.abs(pct).toFixed(0)}% below ${reference}`;
+  return `right at ${reference}`;
 }
 
 export function formatRelativeTime(timestampMs: number, nowMs: number): string {
