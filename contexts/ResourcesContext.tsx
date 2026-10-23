@@ -554,8 +554,16 @@ export function ResourcesProvider({ children }: { children: ReactNode }) {
     setResources(next);
     setLastUpdated(Date.now());
 
+    // Each demo run creates a new custom-platform id, which would
+    // otherwise leave the previous run's guardrail entry orphaned in
+    // storage forever. Drop any guardrail whose resource no longer
+    // exists before adding this run's.
+    const liveIds = new Set(next.map((r) => r.id));
+    const prunedGuardrails = Object.fromEntries(
+      Object.entries(guardrailsRef.current).filter(([resourceId]) => liveIds.has(resourceId))
+    );
     const nextGuardrails = {
-      ...guardrailsRef.current,
+      ...prunedGuardrails,
       [demoDef.id]: { resourceId: demoDef.id, thresholdDollars: 40, enabled: true, hardStopEnabled: true },
     };
     guardrailsRef.current = nextGuardrails;

@@ -1,4 +1,7 @@
+"use client";
+
 import { formatCurrency, formatPercent } from "@/lib/format";
+import { useCountUp } from "@/lib/useCountUp";
 import type { ResourceResult } from "@/lib/types";
 
 interface KpiRowProps {
@@ -12,21 +15,26 @@ interface KpiRowProps {
 
 function KpiCard({
   label,
-  value,
+  rawValue,
+  format,
   caption,
   tone,
   deltaPct,
 }: {
   label: string;
-  value: string;
+  rawValue: number;
+  format: (n: number) => string;
   caption: string;
   tone?: "critical" | "good";
   deltaPct?: number;
 }) {
+  const animated = useCountUp(rawValue);
   return (
     <div className="kpi-card">
       <span className="kpi-card__label">{label}</span>
-      <span className={tone ? `kpi-card__value kpi-card__value--${tone}` : "kpi-card__value"}>{value}</span>
+      <span className={tone ? `kpi-card__value kpi-card__value--${tone}` : "kpi-card__value"}>
+        {format(animated)}
+      </span>
       <span className="kpi-card__caption">
         {caption}
         {typeof deltaPct === "number" && (
@@ -46,18 +54,30 @@ export default function KpiRow({ totalSpendToday, spendDeltaPct, flaggedCount, c
     <div className="kpi-grid">
       <KpiCard
         label="Total monitored spend"
-        value={formatCurrency(totalSpendToday)}
+        rawValue={totalSpendToday}
+        format={formatCurrency}
         caption="Today vs 13-day avg"
         deltaPct={spendDeltaPct}
       />
       <KpiCard
         label="Active anomalies"
-        value={String(flaggedCount)}
+        rawValue={flaggedCount}
+        format={(n) => String(Math.round(n))}
         caption={flaggedCount > 0 ? "Needs attention, right now" : "All clear, right now"}
         tone={flaggedCount > 0 ? "critical" : "good"}
       />
-      <KpiCard label="Connected services" value={String(connectedCount)} caption={providerNames || "No services"} />
-      <KpiCard label="AI API spending" value={formatCurrency(aiSpendToday)} caption="Today · OpenAI + Anthropic" />
+      <KpiCard
+        label="Connected services"
+        rawValue={connectedCount}
+        format={(n) => String(Math.round(n))}
+        caption={providerNames || "No services"}
+      />
+      <KpiCard
+        label="AI API spending"
+        rawValue={aiSpendToday}
+        format={formatCurrency}
+        caption="Today · OpenAI + Anthropic"
+      />
     </div>
   );
 }

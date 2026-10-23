@@ -6,6 +6,7 @@ import { estimateRunwayDaysLost } from "@/lib/anomalyDetection";
 import { COMPANY_MONTHLY_BURN } from "@/lib/mockData";
 import { estimateRequestVolume, isGuardrailBreached } from "@/lib/guardrails";
 import { useResources } from "@/contexts/ResourcesContext";
+import { useCountUp } from "@/lib/useCountUp";
 import { AlertIcon } from "@/components/icons";
 
 interface AnomalyPanelProps {
@@ -42,6 +43,9 @@ export default function AnomalyPanel({ resource }: AnomalyPanelProps) {
   const requestsPct = requests.baseline > 0 ? ((requests.today - requests.baseline) / requests.baseline) * 100 : 0;
   const trackingTogether = Math.abs(requestsPct - deviationPct) < 40;
 
+  const animatedRunway = useCountUp(runwayDaysLost);
+  const animatedLatest = useCountUp(stats.latest);
+
   return (
     <div className={`anomaly-panel anomaly-panel--${severity}`}>
       <div className="anomaly-panel__header">
@@ -66,7 +70,9 @@ export default function AnomalyPanel({ resource }: AnomalyPanelProps) {
       {hasBurnRate ? (
         <div className="anomaly-panel__runway">
           <span className="anomaly-panel__runway-value">
-            {runwayDaysLost > 0 ? `${runwayDaysLost} day${runwayDaysLost === 1 ? "" : "s"}` : "<1 day"}
+            {runwayDaysLost > 0
+              ? `${animatedRunway.toFixed(1)} day${Math.round(animatedRunway) === 1 ? "" : "s"}`
+              : "<1 day"}
           </span>
           <span className="anomaly-panel__runway-label">
             of runway at risk {isGuardrailCase ? "if this stays over budget" : "from this spike"}
@@ -81,7 +87,7 @@ export default function AnomalyPanel({ resource }: AnomalyPanelProps) {
       <div className="anomaly-panel__measurements">
         <div className="measurement">
           <span className="measurement__label">Current spend</span>
-          <span className="measurement__value tabular">{formatCurrency(stats.latest)}</span>
+          <span className="measurement__value tabular">{formatCurrency(animatedLatest)}</span>
         </div>
         <div className="measurement">
           <span className="measurement__label">{isGuardrailCase ? "Your daily limit" : "Expected baseline"}</span>

@@ -1855,3 +1855,111 @@ h3 {
 .limit-row__toggle--disabled input {
   cursor: not-allowed;
 }
+
+/* ---------- Motion: entrances + micro-interactions ---------- */
+
+@keyframes panel-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* One orchestrated entrance on first paint — each top-level panel and
+   KPI card rises in with a slight stagger. Plays once per mount (React
+   keeps the same DOM node across re-renders from live ticking, so this
+   never replays just because a number updated). */
+.shell__content > .panel,
+.shell__content > .kpi-grid,
+.kpi-grid > .kpi-card {
+  animation: panel-rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.shell__content > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+.shell__content > *:nth-child(2) {
+  animation-delay: 40ms;
+}
+.shell__content > *:nth-child(3) {
+  animation-delay: 80ms;
+}
+.shell__content > *:nth-child(4) {
+  animation-delay: 120ms;
+}
+.shell__content > *:nth-child(5) {
+  animation-delay: 160ms;
+}
+.shell__content > *:nth-child(n + 6) {
+  animation-delay: 200ms;
+}
+
+.kpi-grid > .kpi-card:nth-child(1) {
+  animation-delay: 20ms;
+}
+.kpi-grid > .kpi-card:nth-child(2) {
+  animation-delay: 60ms;
+}
+.kpi-grid > .kpi-card:nth-child(3) {
+  animation-delay: 100ms;
+}
+.kpi-grid > .kpi-card:nth-child(4) {
+  animation-delay: 140ms;
+}
+
+@keyframes anomaly-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Each AnomalyPanel is its own DOM node that mounts the moment a
+   resource newly flags — this plays every time, which is exactly the
+   point: it's the visual cue that something just happened. */
+.anomaly-panel {
+  animation: anomaly-pop 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.panel,
+.kpi-card {
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.panel:hover,
+.kpi-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+}
+
+.btn-pause,
+.btn-secondary,
+.btn-simulate,
+.btn-table-pause,
+.icon-btn,
+.limit-row__actions .btn-secondary {
+  transition: filter 0.12s ease, background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
+}
+
+.btn-pause:active:not(:disabled),
+.btn-secondary:active:not(:disabled),
+.btn-simulate:active,
+.btn-table-pause:active:not(:disabled),
+.icon-btn:active {
+  transform: scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel:hover,
+  .kpi-card:hover {
+    transform: none;
+  }
+}
